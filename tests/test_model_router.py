@@ -46,6 +46,41 @@ class ModelRouterTests(unittest.TestCase):
         self.assertEqual(task.metadata["model"], "local-model")
         self.assertTrue(task.metadata["provider_local"])
 
+    def test_request_trace_records_actual_new_input_without_leaking_conversation(self):
+        registry = FakeRegistry()
+        calls = []
+        original_generate = registry.providers["local"].generate
+
+        def capture(user_input, context=None, tools=None, executor=None):
+            calls.append((user_input, context))
+            return original_generate(user_input, context=context, tools=tools, executor=executor)
+
+        registry.providers["local"].generate = capture
+        router = ModelRouter(registry=registry)
+        router.default_provider = "local"
+        first = Task(raw_input="Explain black holes.")
+        second = Task(raw_input="What is a Python function?")
+        self.assertEqual(router.generate(first, context="old question"), "local-result")
+        self.assertEqual(router.generate(second, context="new context"), "local-result")
+        self.assertEqual(calls, [
+            ("Explain black holes.", "old question"),
+            ("What is a Python function?", "new context"),
+        ])
+        for task, message, context in (
+            (first, "Explain black holes.", "old question"),
+            (second, "What is a Python function?", "new context"),
+        ):
+            trace = task.metadata["model_trace"]
+            self.assertEqual(trace["request_id"], task.task_id[:8])
+            self.assertEqual(trace["input_chars"], len(message))
+            self.assertEqual(trace["context_chars"], len(context))
+            self.assertEqual(trace["response_chars"], len("local-result"))
+            self.assertEqual(trace["provider_selected"], "local")
+            self.assertEqual(trace["model_selected"], "local-model")
+            self.assertEqual(trace["status"], "success")
+            self.assertNotIn(message, str(trace))
+            self.assertNotIn(context, str(trace))
+
     def test_explicit_cloud_provider_is_respected_without_tools(self):
         router = ModelRouter(registry=FakeRegistry())
         router.default_provider = "cloud"
