@@ -108,6 +108,9 @@ class JarvisApp(JarvisShell):
         self._quit_requested = False
         self.desktop_presence = DesktopPresence(self)
         self._presence_available = self.desktop_presence.start()
+        self.minimize_button.setVisible(self._presence_available)
+        if self._presence_available:
+            self.minimize_button.clicked.connect(self.hide_to_presence)
         if self._presence_available:
             QApplication.instance().setQuitOnLastWindowClosed(False)
             self.desktop_presence.show_requested.connect(self.show_main_window)
@@ -582,6 +585,13 @@ class JarvisApp(JarvisShell):
         self._diagnostics_window.showFullScreen()
         self._diagnostics_window.raise_()
         self._diagnostics_window.activateWindow()
+
+    @Slot()
+    def hide_to_presence(self):
+        if not self._presence_available:
+            return
+        self.hide()
+        self.desktop_presence.show_orb()
 
     @Slot()
     def show_main_window(self):
