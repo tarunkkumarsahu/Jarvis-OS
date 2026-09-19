@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication
 
 from core.jarvis import Jarvis
 from interface.dashboard import JarvisHUD
+from interface.desktop_presence import DesktopPresence
 from interface.shell import JarvisShell
 from voice.voice_manager import VoiceManager
 from workspace.session_manager import SessionManager
@@ -103,6 +104,15 @@ class JarvisApp(JarvisShell):
         self.jarvis = Jarvis()
         self.sessions = SessionManager()
         self.voice = VoiceManager()
+        self._quit_requested = False
+        self.desktop_presence = DesktopPresence(self)
+        self._presence_available = self.desktop_presence.start()
+        if self._presence_available:
+            QApplication.instance().setQuitOnLastWindowClosed(False)
+            self.desktop_presence.show_requested.connect(self.show_main_window)
+            self.desktop_presence.listen_requested.connect(self.listen_from_desktop)
+            self.desktop_presence.command_submitted.connect(self.command_from_desktop)
+            self.desktop_presence.quit_requested.connect(self.quit_from_desktop)
 
         self._command_thread = None
         self._command_worker = None
@@ -572,7 +582,43 @@ class JarvisApp(JarvisShell):
         self._diagnostics_window.raise_()
         self._diagnostics_window.activateWindow()
 
+    @Slot()
+    def show_main_window(self):
+        """Restore the existing JARVIS session; never construct a second core."""
+        self.desktop_presence.hide_orb()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self.input.setFocus()
+
+    @Slot()
+    def listen_from_desktop(self):
+        self.show_main_window()
+        self.start_voice_input()
+
+    @Slot(str)
+    def command_from_desktop(self, command):
+        command = str(command or "").strip()
+        if not command:
+            return
+        self.show_main_window()
+        self.show_page(self.PAGE_HOME)
+        self.append_message("you", command)
+        self.execute_command(command)
+
+    @Slot()
+    def quit_from_desktop(self):
+        """Only explicit Quit shuts down the runtime when tray is available."""
+        self._quit_requested = True
+        self.close()
+        QApplication.instance().quit()
+
     def closeEvent(self, event):
+        if self._presence_available and not self._quit_requested:
+            event.ignore()
+            self.hide()
+            self.desktop_presence.show_orb()
+            return
         try:
             self.task_timer.stop()
             try:
@@ -593,6 +639,7 @@ class JarvisApp(JarvisShell):
                 if thread is not None and thread.isRunning():
                     thread.quit()
                     thread.wait(7000)
+            self.desktop_presence.shutdown()
             self.jarvis.router.brain.shutdown()
         finally:
             super().closeEvent(event)
