@@ -37,6 +37,15 @@ class VoiceManager:
         value = re.sub(r"`([^`]+)`", r"\1", value)
         value = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", value)
         value = re.sub(r"https?://\S+", "", value)
+        # Spoken audio should never announce Unicode emoji descriptions such as
+        # "smiling face with smiling eyes". Keep the onscreen answer untouched.
+        # Includes pictographs, flags, dingbats, variation selectors and joined
+        # emoji sequences, but deliberately preserves Hindi and Latin letters.
+        value = re.sub(
+            "[\\U0001F000-\\U0001FAFF\\u2600-\\u27BF\\uFE0E\\uFE0F\\u200D\\u20E3]",
+            "",
+            value,
+        )
         value = re.sub(r"[*_#>|]", " ", value)
         value = re.sub(r"\s+", " ", value).strip()
         return value
