@@ -85,8 +85,15 @@ class CommandRouter:
         if command in ("ai model auto", "reset ai model"):
             return self.reset_ai_model()
         if command.startswith("ai model "):
-            # Only "ai model <exact-installed-tag>" changes model selection.
-            return self.select_ai_model(command[len("ai model "):])
+            # The normalized command drops ':' from tags like gemma3:4b.
+            # Extract the actual tag from original input, not normalized text.
+            original = str(user_input or "").strip()
+            match = re.fullmatch(
+                r"(?:jarvis[\\s,]+)?ai model\\s+(.+?)\\s*",
+                original,
+                flags=re.IGNORECASE,
+            )
+            return self.select_ai_model(match.group(1) if match else "")
 
         if command in ["chat diagnostics", "conversation diagnostics"]:
             return self.chat_diagnostics()
