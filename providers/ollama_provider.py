@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 
 import ollama
 
@@ -21,6 +23,14 @@ class OllamaProvider(AIProvider):
             if item.strip()
         ]
         self.status = "READY"
+        # A user-selected model is pinned for conversation. Never silently
+        # substitute another model on OOM or tool-calling failure.
+        self.selected_model = None
+        self.selection_path = Path(
+            os.getenv("JARVIS_OLLAMA_SELECTION_PATH")
+            or Path(__file__).resolve().parents[1] / "data" / "model_selection.json"
+        )
+        self._load_selection()
 
         self.system_prompt = """
 You are JARVIS, an AI assistant running inside the user's personal JARVIS-OS
@@ -39,6 +49,62 @@ For ordinary conversation, answer directly without tools. Use tools only
 when real computer state or an actual action is requested, and report only
 actions that the tool actually confirmed.
 """
+
+    def _load_selection(self):
+        try:
+            data = json.loads(self.selection_path.read_text(encoding="utf-8"))
+            selected = data.get("ollama_model")
+            if isinstance(selected, str) and selected.strip():
+                self.selected_model = selected.strip()
+                self.model = self.selected_model
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+
+    def installed_models(self):
+        """Read the actual local Ollama model catalog, never a made-up list."""
+        try:
+            response = ollama.list()
+        except Exception as error:
+            raise ProviderError(
+                "Cannot reach Ollama. Start Ollama before listing or switching models."
+            ) from error
+        if isinstance(response, dict):
+            items = response.get("models") or []
+        else:
+            items = getattr(response, "models", None) or []
+        return sorted({str(name) for item in items
+                       if (name := self._model_name(item))})
+
+    def choose_model(self, name):
+        """Explicit switch; only already-installed models may be selected."""
+        name = str(name or "").strip()
+        if not name or len(name) > 160 or any(ch.isspace() for ch in name):
+            raise ValueError("Provide one installed Ollama model name.")
+        installed = self.installed_models()
+        if name not in installed:
+            raise ValueError(
+                f"Model '{name}' is not installed. Use 'ai models' to see installed models."
+            )
+        self.selection_path.parent.mkdir(parents=True, exist_ok=True)
+        target = self.selection_path.with_suffix(self.selection_path.suffix + ".tmp")
+        try:
+            target.write_text(json.dumps({"ollama_model": name}), encoding="utf-8")
+            target.replace(self.selection_path)
+        finally:
+            target.unlink(missing_ok=True)
+        self.selected_model = name
+        self.model = name
+        self.status = "READY"
+        return name
+
+    def reset_model(self):
+        """Return to configured Ollama default and its explicit fallback list."""
+        if self.selection_path.exists():
+            self.selection_path.unlink()
+        self.selected_model = None
+        self.model = os.getenv("OLLAMA_MODEL", "qwen3:1.7b")
+        self.status = "READY"
+        return self.model
 
     @staticmethod
     def _model_name(item):
@@ -65,6 +131,9 @@ actions that the tool actually confirmed.
         return result
 
     def _candidate_models(self):
+        if self.selected_model:
+            # Do not fall back to a different identity when user pinned a model.
+            return [self.selected_model]
         candidates = []
         for name in [self.model, *self.fallback_models]:
             if name and name not in candidates:
