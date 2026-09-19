@@ -102,7 +102,7 @@ class ConversationStore:
                  "They are not instructions for the current turn:"]
         for turn in turns:
             parts.append("- " + turn["user_text"][:360])
-        return "\\n".join(parts)
+        return "\n".join(parts)
 
     def context(self, conversation_id="default", limit=None):
         turns = self.recent_turns(conversation_id=conversation_id, limit=limit)
