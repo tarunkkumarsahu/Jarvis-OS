@@ -1,4 +1,7 @@
+import os
+
 from files.file_index import FileIndex
+from memory.conversation_store import ConversationStore
 from memory.memory_manager import MemoryManager
 from productivity.productivity_store import ProductivityStore
 
@@ -16,10 +19,34 @@ class ContextBuilder:
         memory_manager=None,
         file_index=None,
         productivity_store=None,
+        conversation_store=None,
     ):
         self.memory = memory_manager or MemoryManager()
         self.file_index = file_index
         self.productivity_store = productivity_store
+        self.conversation_store = conversation_store
+
+    def _get_conversation_store(self):
+        if os.getenv("JARVIS_CONVERSATION_MEMORY_ENABLED", "true").lower() in (
+            "0", "false", "off", "no"
+        ):
+            return None
+        if self.conversation_store is None:
+            try:
+                self.conversation_store = ConversationStore()
+            except (OSError, ValueError):
+                self.conversation_store = False
+        return self.conversation_store if self.conversation_store is not False else None
+
+    def record_conversation_turn(self, user_text, assistant_text, conversation_id="default"):
+        store = self._get_conversation_store()
+        if store is None:
+            return False
+        return store.add_turn(user_text, assistant_text, conversation_id=conversation_id)
+
+    def clear_conversation(self, conversation_id="default"):
+        store = self._get_conversation_store()
+        return store.clear(conversation_id) if store is not None else 0
 
     def _get_file_index(self):
         if self.file_index is None:
@@ -50,6 +77,15 @@ class ContextBuilder:
                 for key, value in memories.items()
             )
             sections.append(f"Known user memory:\n{memory_lines}")
+
+        if task.intent == "conversation":
+            store = self._get_conversation_store()
+            if store is not None:
+                history = store.context(
+                    conversation_id=task.metadata.get("conversation_id", "default")
+                )
+                if history:
+                    sections.append(history)
 
         if task.intent == "file":
             index = self._get_file_index()
