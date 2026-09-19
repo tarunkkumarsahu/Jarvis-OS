@@ -58,6 +58,26 @@ class CommandRouter:
             count = builder.clear_conversation() if hasattr(builder, "clear_conversation") else 0
             return f"Cleared {count} saved conversation turn(s). Other project memory and task history were not changed."
 
+        if command in (
+            "speak casually", "talk casually", "casual mode",
+            "baat kar bhai", "hinglish mode", "speak in hinglish",
+            "jarvis speak in hinglish",
+        ):
+            self.memory.remember(
+                "conversation_style",
+                "Natural conversational Hinglish, short replies unless detail is requested; "
+                "no scripted greetings, feature menus, or unnecessary emoji.",
+            )
+            return "Theek hai bhai, ab naturally Hinglish mein baat karunga."
+
+        if command in ("english mode", "speak in english"):
+            self.memory.remember(
+                "conversation_style",
+                "Natural English, concise unless detail is requested; "
+                "no scripted greetings, feature menus, or unnecessary emoji.",
+            )
+            return "Got it. I'll use natural English."
+
         if command in ["help", "commands"]:
             return self.help()
 
