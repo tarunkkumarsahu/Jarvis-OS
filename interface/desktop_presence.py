@@ -142,6 +142,7 @@ class DesktopPresence(QObject):
         self.tray = None
         self.orb = None
         self.quick = None
+        self.menu = None
 
     def start(self):
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -149,6 +150,7 @@ class DesktopPresence(QObject):
         self.tray = QSystemTrayIcon(jarvis_icon(), self)
         self.tray.setToolTip("JARVIS · Personal AI Operating Environment")
         menu = QMenu()
+        self.menu = menu
         menu.addAction("Open JARVIS", self.show_requested.emit)
         menu.addAction("Quick command", self.open_quick_command)
         menu.addAction("Speak to JARVIS", self.listen_requested.emit)
