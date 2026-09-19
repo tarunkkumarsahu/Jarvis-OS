@@ -78,6 +78,9 @@ class CommandRouter:
             )
             return "Got it. I'll use natural English."
 
+        if command in ["chat diagnostics", "conversation diagnostics"]:
+            return self.chat_diagnostics()
+
         if command in ["help", "commands"]:
             return self.help()
 
@@ -211,6 +214,59 @@ class CommandRouter:
             "  • who are you\n"
             "  • exit"
         )
+
+    def chat_diagnostics(self):
+        """Show selected model and response repetition without exposing chat text.
+
+        This command is deliberately local: no new model calls, no API keys,
+        raw prompts, saved assistant responses, or provider error strings.
+        """
+        orchestrator = self.brain.orchestrator
+        router = orchestrator.model_router
+        tasks = [
+            item for item in orchestrator.task_store.list(limit=30)
+            if item.intent == "conversation"
+        ][:5]
+        disabled = ", ".join(sorted(getattr(router, "disabled_providers", set()))) or "none"
+        lines = [
+            "JARVIS chat diagnostics (local, no AI call)",
+            f"Routing preference: {getattr(router, 'default_provider', 'unknown')}",
+            f"Routing mode: {getattr(router, 'routing_mode', 'unknown')}",
+            f"Disabled providers: {disabled}",
+            "Recent model-backed conversation tasks (newest first):",
+        ]
+        if not tasks:
+            lines.append("  No conversation tasks yet. Direct local commands do not create AI tasks.")
+            return "\n".join(lines)
+
+        seen_responses = {}
+        for task in tasks:
+            meta = task.metadata or {}
+            attempts = meta.get("routing_attempts") or []
+            route = ", ".join(
+                f"{item.get('provider', '?')}:{item.get('status', '?')}"
+                for item in attempts if isinstance(item, dict)
+            ) or "none recorded"
+            output = str(task.result or "").strip()
+            duplicate = False
+            if len(output) >= 70 and task.status.value == "completed":
+                from hashlib import sha256
+                fingerprint = sha256(output.casefold().encode("utf-8")).hexdigest()
+                duplicate = fingerprint in seen_responses
+                seen_responses[fingerprint] = True
+            lines.append(
+                f"  {task.task_id[:8]} | status={task.status.value} | "
+                f"provider={meta.get('provider') or 'none'} | "
+                f"model={meta.get('model') or 'unknown'} | "
+                f"retry={meta.get('conversation_retry') or 'none'} | "
+                f"duplicate_reply={'yes' if duplicate else 'no'} | routes={route}"
+            )
+        lines.append(
+            "If direct Ollama answers differ but these tasks use a different "
+            "model/provider, align JARVIS_PROVIDER and OLLAMA_MODEL in .env. "
+            "Do not share API keys or the entire .env file."
+        )
+        return "\n".join(lines)
 
     def system_info(self):
         info = SystemTools.get_system_info()
