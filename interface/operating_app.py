@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -648,7 +649,10 @@ class JarvisApp(JarvisShell):
 def run_app():
     app = QApplication.instance() or QApplication(sys.argv)
     window = JarvisApp()
-    window.showFullScreen()
+    if os.getenv("JARVIS_START_MINIMIZED") == "1" and window._presence_available:
+        window.desktop_presence.show_orb()
+    else:
+        window.showFullScreen()
     return app.exec()
 
 
