@@ -36,7 +36,7 @@ class CommandRouter:
     def route(self, user_input):
         # Recognize the spoken summons before normalization strips "Jarvis".
         if re.fullmatch(
-            r"\\s*hey[\\s,]+jarvis[.!?\\s]*",
+            r"\s*hey[\s,]+jarvis[.!?\s]*",
             str(user_input or ""),
             flags=re.IGNORECASE,
         ):
