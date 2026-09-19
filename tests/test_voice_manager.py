@@ -13,6 +13,17 @@ class VoiceManagerTests(unittest.TestCase):
 
         self.assertEqual(cleaned, "Result Use JARVIS and main.py.")
 
+    def test_speech_removes_emoji_names_without_touching_hinglish(self):
+        on_screen = "Haan bhai 😁 aaj JARVIS banate hain 🚀! ❤️"
+        spoken = VoiceManager.clean_text(on_screen)
+        self.assertEqual(spoken, "Haan bhai aaj JARVIS banate hain !")
+        self.assertNotIn("smiling face", spoken)
+        self.assertEqual(on_screen, "Haan bhai 😁 aaj JARVIS banate hain 🚀! ❤️")
+
+    def test_emoji_only_response_is_not_spoken(self):
+        voice = VoiceManager()
+        self.assertEqual(voice.speech_text("😊🥳"), "")
+
     def test_long_response_is_clipped_for_voice_only(self):
         voice = VoiceManager()
         voice.max_speech_chars = 24
