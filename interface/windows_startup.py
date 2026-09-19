@@ -39,7 +39,7 @@ def _read_value(registry):
 
 
 def startup_status(project_root, python_executable=None, registry=None):
-    if os.name != "nt":
+    if os.name != "nt" and registry is None:
         return "Windows sign-in startup is not supported on this operating system."
     if registry is None:
         import winreg as registry
