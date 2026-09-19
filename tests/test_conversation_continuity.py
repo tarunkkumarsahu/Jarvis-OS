@@ -66,7 +66,8 @@ class ConversationContinuityTests(unittest.TestCase):
                 self.assertIn("My name is Tarun", orchestrator.handle("My name is Tarun"))
                 self.assertIn("What is my name?", orchestrator.handle("What is my name?"))
                 self.assertIn("My name is Tarun", model.contexts[1])
-                self.assertIn("JARVIS answer to: My name is Tarun", model.contexts[1])
+                self.assertNotIn("JARVIS answer to: My name is Tarun", model.contexts[1])
+                self.assertIn("Recent USER utterances", model.contexts[1])
                 self.assertEqual(len(ConversationStore(db_path=path).recent_turns()), 2)
             finally:
                 orchestrator.shutdown()
@@ -81,6 +82,30 @@ class ConversationContinuityTests(unittest.TestCase):
             self.assertNotIn("user 2", context)
             self.assertIn("user 3", context)
             self.assertIn("user 4", context)
+
+    def test_previous_repetitive_assistant_answers_do_not_poison_new_question(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = ConversationStore(db_path=Path(folder) / "jarvis.db")
+            stale = "Haan bol! Main kisi bhi task mein help kar sakta hoon. Let me know!"
+            store.add_turn("What can you do?", stale)
+            store.add_turn("Chrome pe search karke dekho", stale)
+            store.add_turn("Mere system me kitne apps run ho rahe hain?", stale)
+            recent = store.recent_user_context()
+            self.assertIn("Chrome pe search", recent)
+            self.assertIn("kitne apps run", recent)
+            self.assertNotIn(stale, recent)
+            self.assertEqual(len(store.recent_turns()), 3)  # UI history is preserved
+
+    def test_user_context_is_bounded_and_preserves_latest_question(self):
+        with tempfile.TemporaryDirectory() as folder:
+            store = ConversationStore(db_path=Path(folder) / "jarvis.db")
+            for i in range(10):
+                store.add_turn(f"question {i}", f"answer {i}")
+            recent = store.recent_user_context(limit=3)
+            self.assertNotIn("question 6", recent)
+            self.assertIn("question 7", recent)
+            self.assertIn("question 9", recent)
+            self.assertNotIn("answer", recent)
 
     def test_conversation_can_be_disabled_without_deleting_history(self):
         from core.task import Task
