@@ -81,8 +81,9 @@ class ContextBuilder:
         if task.intent == "conversation":
             store = self._get_conversation_store()
             if store is not None:
-                history = store.context(
-                    conversation_id=task.metadata.get("conversation_id", "default")
+                history = store.recent_user_context(
+                    conversation_id=task.metadata.get("conversation_id", "default"),
+                    limit=4,
                 )
                 if history:
                     sections.append(history)
