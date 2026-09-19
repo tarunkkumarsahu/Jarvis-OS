@@ -1,4 +1,6 @@
 import unittest
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from voice.voice_manager import VoiceManager
@@ -19,6 +21,33 @@ class VoiceManagerTests(unittest.TestCase):
 
         self.assertLess(len(result), 100)
         self.assertIn("rest of the response on screen", result)
+
+    def test_optional_local_whisper_transcribes_and_reuses_model(self):
+        made = []
+        class FakeWhisperModel:
+            def __init__(self, name, device, compute_type):
+                made.append((name, device, compute_type))
+
+            def transcribe(self, audio_file, **kwargs):
+                self_last_path.append(audio_file)
+                self_last_options.append(kwargs)
+                return iter([SimpleNamespace(text=" Haan bhai "), SimpleNamespace(text=" kya haal hai ")]), None
+
+        self_last_path = []
+        self_last_options = []
+        fake_package = SimpleNamespace(WhisperModel=FakeWhisperModel)
+        voice = VoiceManager()
+        voice.local_stt_model = "base"
+        with patch.dict(sys.modules, {"faster_whisper": fake_package}):
+            text1 = voice.transcribe_local_file("test1.wav")
+            text2 = voice.transcribe_local_file("test2.wav")
+
+        self.assertEqual(text1, "Haan bhai kya haal hai")
+        self.assertEqual(text2, text1)
+        self.assertEqual(made, [("base", "cpu", "int8")])
+        self.assertEqual(self_last_path, ["test1.wav", "test2.wav"])
+        self.assertTrue(all(option["vad_filter"] for option in self_last_options))
+        self.assertTrue(all(option["language"] is None for option in self_last_options))
 
     @patch("voice.voice_manager.subprocess.run")
     def test_windows_tts_passes_text_through_environment(self, run):
