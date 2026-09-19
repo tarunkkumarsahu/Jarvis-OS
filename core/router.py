@@ -282,11 +282,15 @@ class CommandRouter:
         )
 
     def reset_ai_model(self):
+        import os
         try:
             provider = self._ollama_provider()
             configured = provider.reset_model()
         except OSError:
             return "Could not reset the saved AI model selection."
+        self.brain.orchestrator.model_router.default_provider = (
+            os.getenv("JARVIS_PROVIDER", "auto").lower().strip()
+        )
         return f"Model selection reset. Configured Ollama default: {configured}."
 
     def chat_probe(self):
