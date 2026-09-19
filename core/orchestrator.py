@@ -101,6 +101,23 @@ class Orchestrator:
                 )
 
             self.task_manager.complete(task, result=result)
+            # Only successful model-backed conversation belongs in chat history.
+            # Direct commands, tool traces, failures and unavailable providers
+            # must not contaminate the natural multi-turn dialogue context.
+            if (
+                task.intent == "conversation"
+                and task.metadata.get("provider")
+                and hasattr(self.context_builder, "record_conversation_turn")
+            ):
+                try:
+                    self.context_builder.record_conversation_turn(
+                        task.raw_input,
+                        result,
+                        conversation_id=task.metadata.get("conversation_id", "default"),
+                    )
+                except Exception:
+                    # A local history write failure must not hide a valid answer.
+                    pass
             return result
         except Exception as error:
             self.task_manager.fail(task, error)
