@@ -166,6 +166,11 @@ class JarvisShell(QWidget):
         row.addStretch()
         row.addWidget(self.model_label)
         row.addWidget(self.status_label)
+        self.minimize_button = QPushButton("To orb")
+        self.minimize_button.setObjectName("secondaryButton")
+        self.minimize_button.setToolTip("Keep JARVIS running in the tray and show the desktop orb")
+        self.minimize_button.setVisible(False)
+        row.addWidget(self.minimize_button)
         row.addWidget(self.clock_label)
         return row
 
