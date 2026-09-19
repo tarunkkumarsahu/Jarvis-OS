@@ -22,6 +22,14 @@ class ModelRouter:
             for item in os.getenv("JARVIS_DISABLED_PROVIDERS", "").split(",")
             if item.strip()
         }
+        # An explicit model choice made through JARVIS survives app restart.
+        # Respect the local selection unless Ollama was explicitly disabled.
+        if "ollama" not in self.disabled_providers and "ollama" in self.registry.names():
+            try:
+                if getattr(self.registry.get("ollama"), "selected_model", None):
+                    self.default_provider = "ollama"
+            except Exception:
+                pass
 
     def _candidate_names(self, task, tools=None):
         preferred = task.preferred_provider or self.default_provider
