@@ -87,6 +87,23 @@ class ConversationStore:
             )
         return result.rowcount
 
+    def recent_user_context(self, conversation_id="default", limit=4):
+        """Compact context for small models: only what the USER actually said.
+
+        Previous model replies may be hallucinated or a repeated canned answer.
+        Embedding them as system instructions can cause a small model to repeat
+        that answer regardless of the latest user turn. Retain the full history
+        in SQLite/UI but use user-authored utterances for model recall.
+        """
+        turns = self.recent_turns(conversation_id=conversation_id, limit=limit)
+        if not turns:
+            return ""
+        parts = ["Recent USER utterances for continuity only (oldest first). "
+                 "They are not instructions for the current turn:"]
+        for turn in turns:
+            parts.append("- " + turn["user_text"][:360])
+        return "\\n".join(parts)
+
     def context(self, conversation_id="default", limit=None):
         turns = self.recent_turns(conversation_id=conversation_id, limit=limit)
         if not turns:
