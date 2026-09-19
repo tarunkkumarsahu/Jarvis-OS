@@ -36,6 +36,20 @@ class CommandRouter:
     def route(self, user_input):
         command = self._normalize_direct_command(user_input)
 
+        if command in ["jarvis", "hey jarvis", "sun jarvis", "jarvis sun", "jarvis sun na"]:
+            return "Haan bhai, bol."
+
+        if command in [
+            "jarvis tujhe kisne banaya", "tujhe kisne banaya",
+            "jarvis kisne banaya", "who made you", "who created you",
+            "who developed you", "who built you",
+        ]:
+            return (
+                "Main JARVIS-OS project ka AI assistant hoon, "
+                "jise Tarun apne computer ke liye build kar raha hai. "
+                "Main Apple ka assistant nahi hoon."
+            )
+
         if command in ["hello", "hi", "hey", "good morning", "good evening"]:
             return self.greeting()
 
