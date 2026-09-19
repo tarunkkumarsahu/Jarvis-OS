@@ -70,7 +70,7 @@ def enable_autostart(project_root, python_executable=None, registry=None):
 
 
 def disable_autostart(project_root, python_executable=None, registry=None):
-    if os.name != "nt":
+    if os.name != "nt" and registry is None:
         raise RuntimeError("Automatic sign-in startup is supported only on Windows.")
     if registry is None:
         import winreg as registry
