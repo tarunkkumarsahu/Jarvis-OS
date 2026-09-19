@@ -78,6 +78,16 @@ class CommandRouter:
             )
             return "Got it. I'll use natural English."
 
+        if command in ("ai models", "list ai models", "available models"):
+            return self.list_ai_models()
+        if command in ("ai model", "active ai model"):
+            return self.active_ai_model()
+        if command in ("ai model auto", "reset ai model"):
+            return self.reset_ai_model()
+        if command.startswith("ai model "):
+            # Only "ai model <exact-installed-tag>" changes model selection.
+            return self.select_ai_model(command[len("ai model "):])
+
         if command in ["chat diagnostics", "conversation diagnostics"]:
             return self.chat_diagnostics()
 
@@ -217,6 +227,60 @@ class CommandRouter:
             "  • who are you\n"
             "  • exit"
         )
+
+    def _ollama_provider(self):
+        return self.brain.orchestrator.model_router.registry.get("ollama")
+
+    def list_ai_models(self):
+        try:
+            provider = self._ollama_provider()
+            models = provider.installed_models()
+        except Exception:
+            return "Cannot list local models. Check that Ollama is running."
+        if not models:
+            return (
+                "No Ollama models installed. In PowerShell use "
+                "'ollama pull gemma3:4b' or 'ollama pull nemotron-3-nano:4b'."
+            )
+        lines = [
+            "Installed Ollama models (no download or model call performed):",
+        ]
+        for model in models:
+            label = " [selected]" if model == provider.selected_model else (
+                " [active/default]" if model == provider.model else ""
+            )
+            lines.append(f"  {model}{label}")
+        lines.append("To switch: ai model <exact model name from this list>")
+        lines.append("To reset: ai model auto")
+        return "\n".join(lines)
+
+    def active_ai_model(self):
+        provider = self._ollama_provider()
+        mode = "pinned" if provider.selected_model else "configured default/fallback"
+        return f"JARVIS Ollama model: {provider.model} ({mode})."
+
+    def select_ai_model(self, model):
+        try:
+            provider = self._ollama_provider()
+            chosen = provider.choose_model(model)
+        except ValueError as error:
+            return str(error)
+        except Exception:
+            return "Could not switch models. Check Ollama connection and local settings path."
+        self.brain.orchestrator.model_router.default_provider = "ollama"
+        return (
+            f"Selected local Ollama model: {chosen}. "
+            "This choice persists after restart. Model loading occurs on the next "
+            "AI request; no download or background execution was started."
+        )
+
+    def reset_ai_model(self):
+        try:
+            provider = self._ollama_provider()
+            configured = provider.reset_model()
+        except OSError:
+            return "Could not reset the saved AI model selection."
+        return f"Model selection reset. Configured Ollama default: {configured}."
 
     def chat_probe(self):
         """Two controlled local model calls with no memory or desktop tools.
