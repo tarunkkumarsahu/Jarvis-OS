@@ -39,6 +39,11 @@ class CommandRouter:
         if command in ["hello", "hi", "hey", "good morning", "good evening"]:
             return self.greeting()
 
+        if command in ["clear conversation", "clear chat history", "forget this conversation"]:
+            builder = self.brain.orchestrator.context_builder
+            count = builder.clear_conversation() if hasattr(builder, "clear_conversation") else 0
+            return f"Cleared {count} saved conversation turn(s). Other project memory and task history were not changed."
+
         if command in ["help", "commands"]:
             return self.help()
 
