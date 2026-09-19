@@ -107,6 +107,9 @@ class WindowsStartupTests(unittest.TestCase):
                 ast.parse((root / relative).read_text(encoding="utf-8"))
         app = (root / "interface/operating_app.py").read_text(encoding="utf-8")
         self.assertIn("self.desktop_presence.show_orb()", app)
+        self.assertIn("def hide_to_presence(self):", app)
+        shell = (root / "interface/shell.py").read_text(encoding="utf-8")
+        self.assertIn('self.minimize_button = QPushButton("To orb")', shell)
         self.assertIn("self._quit_requested = True", app)
         self.assertIn("self.desktop_presence.shutdown()", app)
 
