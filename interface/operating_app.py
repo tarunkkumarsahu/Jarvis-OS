@@ -153,12 +153,28 @@ class JarvisApp(JarvisShell):
         self.refresh_runtime_panels()
         self.refresh_today()
         self.refresh_file_status()
+        self.restore_recent_conversation()
 
         scheduler = self.jarvis.router.brain.orchestrator.reminder_scheduler
         if scheduler is not None:
             scheduler.check_now()
 
         QTimer.singleShot(450, self._speak_startup_greeting)
+
+    def restore_recent_conversation(self):
+        """Show previously saved dialogue without re-running AI or speaking it."""
+        builder = self.jarvis.router.brain.orchestrator.context_builder
+        try:
+            store = builder._get_conversation_store()
+            turns = store.recent_turns(limit=6) if store is not None else []
+        except Exception:
+            turns = []
+        if not turns:
+            return
+        self.append_message("jarvis", "Previous conversation restored from this computer.")
+        for turn in turns:
+            self.append_message("you", turn["user_text"])
+            self.append_message("jarvis", turn["assistant_text"])
 
     def _speak_startup_greeting(self):
         self.speak_response("JARVIS online. Ready when you are.")
