@@ -22,6 +22,9 @@ class VoiceManager:
         self.rate = int(os.getenv("JARVIS_TTS_RATE", "178"))
         self.volume = float(os.getenv("JARVIS_TTS_VOLUME", "1.0"))
         self.language = os.getenv("JARVIS_STT_LANGUAGE", "en-IN")
+        self.stt_backend = os.getenv("JARVIS_STT_BACKEND", "google").lower().strip()
+        self.local_stt_model = os.getenv("JARVIS_STT_MODEL", "base")
+        self._whisper_model = None
         self.max_speech_chars = int(os.getenv("JARVIS_TTS_MAX_CHARS", "900"))
 
     @staticmethod
@@ -102,6 +105,40 @@ class VoiceManager:
             raise VoiceUnavailableError("Windows System.Speech could not synthesize audio.")
         return True
 
+    def transcribe_local_file(self, audio_path):
+        """Opt-in multilingual offline transcription via faster-whisper.
+
+        CPU int8 avoids competing with Ollama for scarce GPU/VRAM resources.
+        Models are initialized lazily and reused for the current app session.
+        """
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as error:
+            raise VoiceUnavailableError(
+                "Local speech recognition needs faster-whisper. "
+                "Install with: python -m pip install faster-whisper"
+            ) from error
+
+        if self._whisper_model is None:
+            try:
+                self._whisper_model = WhisperModel(
+                    self.local_stt_model, device="cpu", compute_type="int8"
+                )
+            except Exception as error:
+                raise VoiceUnavailableError(
+                    f"Could not load local speech model: {error}"
+                ) from error
+
+        try:
+            segments, _ = self._whisper_model.transcribe(
+                str(audio_path), beam_size=3, vad_filter=True, language=None
+            )
+            return " ".join(part.text.strip() for part in segments if part.text.strip()).strip()
+        except Exception as error:
+            raise VoiceUnavailableError(
+                f"Local speech recognition failed: {error}"
+            ) from error
+
     def listen(self, duration=6):
         """Record one utterance and return recognized text.
 
@@ -111,13 +148,18 @@ class VoiceManager:
         """
         try:
             import sounddevice as sd
-            import speech_recognition as sr
+            if self.stt_backend == "google":
+                import speech_recognition as sr
         except ImportError as error:
             raise VoiceUnavailableError(
                 "Voice input dependencies are missing. Run pip install -r requirements.txt."
             ) from error
 
-        recognizer = sr.Recognizer()
+        if self.stt_backend not in ("google", "whisper"):
+            raise VoiceUnavailableError(
+                "Unsupported speech backend. Set JARVIS_STT_BACKEND to google or whisper."
+            )
+        recognizer = sr.Recognizer() if self.stt_backend == "google" else None
         sample_rate = 16000
 
         try:
@@ -141,6 +183,9 @@ class VoiceManager:
                 wav_file.setsampwidth(2)
                 wav_file.setframerate(sample_rate)
                 wav_file.writeframes(recording.tobytes())
+
+            if self.stt_backend == "whisper":
+                return self.transcribe_local_file(temp_path)
 
             with sr.AudioFile(temp_path) as source:
                 audio = recognizer.record(source)
