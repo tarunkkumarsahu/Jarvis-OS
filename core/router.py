@@ -89,7 +89,7 @@ class CommandRouter:
             # Extract the actual tag from original input, not normalized text.
             original = str(user_input or "").strip()
             match = re.fullmatch(
-                r"(?:jarvis[\\s,]+)?ai model\\s+(.+?)\\s*",
+                r"(?:jarvis[\s,]+)?ai model\s+(.+?)\s*",
                 original,
                 flags=re.IGNORECASE,
             )
