@@ -1,6 +1,7 @@
 from agents.agent_registry import AgentRegistry
 from agents.agent_router import AgentRouter
 from core.context_builder import ContextBuilder
+from core.conversation_quality import is_stale_reply
 from core.event_bus import EventBus
 from core.intent_engine import IntentEngine
 from core.task import TaskStatus
@@ -92,6 +93,9 @@ class Orchestrator:
             if task.status == TaskStatus.WAITING_APPROVAL:
                 return result
 
+            if task.intent == "conversation" and task.metadata.get("provider"):
+                result = self._recover_stale_conversation(task, result)
+
             self.task_manager.transition(task, TaskStatus.VERIFYING)
 
             verification = self.verifier.verify(task, result)
@@ -122,6 +126,49 @@ class Orchestrator:
         except Exception as error:
             self.task_manager.fail(task, error)
             return f"JARVIS task failed: {error}"
+
+    def _recover_stale_conversation(self, task, result):
+        """One history-free retry when a model repeats an unrelated old answer.
+
+        The latest question stays unchanged. No external computer actions are
+        retried because this path is exclusively for tool-free conversation.
+        """
+        builder = self.context_builder
+        get_store = getattr(builder, "_get_conversation_store", None)
+        if not callable(get_store):
+            return result
+        store = get_store()
+        if store is None:
+            return result
+        conversation_id = task.metadata.get("conversation_id", "default")
+        previous = store.recent_turns(conversation_id=conversation_id, limit=4)
+        if not is_stale_reply(task.raw_input, result, previous):
+            return result
+
+        task.metadata["conversation_retry"] = "stale_answer_detected"
+        agent = self.agent_router.route(task)
+        try:
+            retry = agent.execute(
+                task,
+                context=(
+                    "The previous response repeated an answer to a DIFFERENT "
+                    "question. Ignore earlier chat history and answer only this "
+                    "latest user request, with specific information. If you "
+                    "cannot answer, say so rather than repeating a canned reply."
+                ),
+            )
+        except Exception:
+            retry = ""
+        if not retry or is_stale_reply(task.raw_input, retry, previous):
+            task.metadata["conversation_retry"] = "still_repeating"
+            raise RuntimeError(
+                "The selected AI model repeated an unrelated answer even "
+                "after a fresh retry. Check the active model/provider in "
+                "Diagnostics and try another model. No fabricated answer was saved."
+            )
+
+        task.metadata["conversation_retry"] = "recovered"
+        return retry
 
     def _execute(self, task, explicit_context=None):
         agent = self.agent_router.route(task)
