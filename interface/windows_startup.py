@@ -77,9 +77,10 @@ def disable_autostart(project_root, python_executable=None, registry=None):
     current = _read_value(registry)
     if current is None:
         return "JARVIS sign-in startup is already disabled."
-    # Never remove an entry we cannot identify as this project's launcher.
-    expected = startup_command(project_root, python_executable)
-    if current != expected:
+    # Permit removal even if the previous venv or pythonw.exe was deleted.
+    # Only remove a registry entry that launches this installation's launcher.
+    launcher = str(Path(project_root).expanduser().resolve() / "startup_launcher.py")
+    if not current.casefold().endswith(subprocess.list2cmdline([launcher]).casefold()):
         raise RuntimeError("The startup entry belongs to a different JARVIS installation; unchanged.")
     with registry.OpenKey(
         registry.HKEY_CURRENT_USER, RUN_KEY, 0, registry.KEY_SET_VALUE
