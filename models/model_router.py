@@ -1,4 +1,5 @@
 import os
+from time import perf_counter
 
 from models.model_registry import ModelRegistry
 from providers.ai_provider import ProviderError
@@ -65,6 +66,19 @@ class ModelRouter:
         errors = []
         attempts = []
         candidates = self._candidate_names(task, tools=tools)
+        # Safe, persistent request trace: only sizes, task ID and provider/model
+        # identities. Never persist raw prompts, memory, responses or API keys.
+        task.metadata["model_trace"] = {
+            "request_id": task.task_id[:8],
+            "input_chars": len(str(task.raw_input or "")),
+            "context_chars": len(str(context or "")),
+            "tools_exposed": bool(tools),
+            "provider_selected": None,
+            "model_selected": None,
+            "response_chars": 0,
+            "elapsed_ms": 0,
+            "status": "not_started",
+        }
 
         if task.requires_tools and tools and not candidates:
             task.metadata["routing_attempts"] = []
@@ -86,6 +100,7 @@ class ModelRouter:
                 attempts.append({"provider": name, "status": "unavailable"})
                 continue
 
+            started = perf_counter()
             try:
                 result = provider.generate(
                     user_input=task.raw_input,
@@ -102,6 +117,13 @@ class ModelRouter:
                 attempts.append({"provider": name, "status": "unexpected_error", "error": str(error)})
                 continue
 
+            task.metadata["model_trace"].update({
+                "provider_selected": name,
+                "model_selected": getattr(provider, "model", None),
+                "response_chars": len(str(result or "")),
+                "elapsed_ms": round((perf_counter() - started) * 1000),
+                "status": "success",
+            })
             attempts.append({"provider": name, "status": "success"})
             task.metadata["provider"] = name
             task.metadata["model"] = getattr(provider, "model", None)
@@ -111,6 +133,7 @@ class ModelRouter:
             return result
 
         task.metadata["routing_attempts"] = attempts
+        task.metadata["model_trace"]["status"] = "no_usable_provider"
         details = "; ".join(errors) if errors else "no providers registered"
         return (
             "JARVIS could not reach a usable AI model right now. "
