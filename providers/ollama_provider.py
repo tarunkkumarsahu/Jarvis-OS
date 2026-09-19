@@ -99,11 +99,12 @@ actions that the tool actually confirmed.
         errors = []
         for model in candidates:
             try:
-                response = ollama.chat(
-                    model=model,
-                    messages=messages,
-                    tools=tools or [],
-                )
+                # Do not send empty tool catalogs to conversational models.
+                # Different Ollama backends may interpret tools=[] differently.
+                request = {"model": model, "messages": messages}
+                if tools:
+                    request["tools"] = tools
+                response = ollama.chat(**request)
             except Exception as error:
                 errors.append((model, error))
                 # Memory pressure is exactly where a smaller installed model
@@ -152,7 +153,10 @@ actions that the tool actually confirmed.
         messages.append(
             {
                 "role": "user",
-                "content": "/no_think\n" + user_input,
+                # Never prepend Qwen-specific commands to another model's
+                # user message. In particular Gemma and Nemotron should receive
+                # the literal latest question, not a prompt-control token.
+                "content": user_input,
             }
         )
 
