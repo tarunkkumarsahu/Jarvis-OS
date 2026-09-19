@@ -81,6 +81,9 @@ class CommandRouter:
         if command in ["chat diagnostics", "conversation diagnostics"]:
             return self.chat_diagnostics()
 
+        if command in ["chat probe", "conversation probe"]:
+            return self.chat_probe()
+
         if command in ["help", "commands"]:
             return self.help()
 
@@ -215,6 +218,61 @@ class CommandRouter:
             "  • exit"
         )
 
+    def chat_probe(self):
+        """Two controlled local model calls with no memory or desktop tools.
+
+        Explicitly invoked by the user. Does not store the synthetic probes as
+        conversation turns and never calls cloud providers or takes actions.
+        """
+        from time import perf_counter
+
+        registry = self.brain.orchestrator.model_router.registry
+        try:
+            provider = registry.get("ollama")
+        except Exception:
+            return "Ollama is not configured for this installation."
+        if not provider.is_available:
+            return "Local Ollama provider is unavailable."
+        prompts = (
+            "Give one specific fact about black holes in one sentence. Do not introduce yourself.",
+            "Define a Python function in one sentence. Do not introduce yourself.",
+        )
+        lines = ["JARVIS local chat probe: two independent, history-free model requests."]
+        responses = []
+        for index, prompt in enumerate(prompts, start=1):
+            started = perf_counter()
+            try:
+                answer = str(provider.generate(user_input=prompt, context=None, tools=None)).strip()
+            except Exception as error:
+                # Avoid embedding provider errors that may contain sensitive data.
+                return (
+                    "Local chat probe failed on request "
+                    f"{index}: {type(error).__name__}. "
+                    "Verify Ollama is running and has the configured model installed."
+                )
+            responses.append(answer)
+            lines.append(
+                f"Probe {index} | model={provider.model} | "
+                f"elapsed_ms={round((perf_counter()-started)*1000)} | "
+                f"answer: {answer[:500] if answer else '[empty response]'}"
+            )
+        from core.conversation_quality import is_stale_reply
+        repeated = is_stale_reply(
+            prompts[1],
+            responses[1],
+            [{"user_text": prompts[0], "assistant_text": responses[0]}],
+        )
+        lines.append(
+            "Probe result: unrelated repeated answers detected."
+            if repeated else
+            "Probe result: no long near-duplicate detected; check answer relevance manually."
+        )
+        lines.append(
+            "The probe bypasses JARVIS conversation memory, UI and agent routing; "
+            "it does not prove normal chat is working."
+        )
+        return "\n".join(lines)
+
     def chat_diagnostics(self):
         """Show selected model and response repetition without exposing chat text.
 
@@ -254,12 +312,17 @@ class CommandRouter:
                 fingerprint = sha256(output.casefold().encode("utf-8")).hexdigest()
                 duplicate = fingerprint in seen_responses
                 seen_responses[fingerprint] = True
+            trace = meta.get("model_trace") or {}
             lines.append(
                 f"  {task.task_id[:8]} | status={task.status.value} | "
                 f"provider={meta.get('provider') or 'none'} | "
                 f"model={meta.get('model') or 'unknown'} | "
                 f"retry={meta.get('conversation_retry') or 'none'} | "
-                f"duplicate_reply={'yes' if duplicate else 'no'} | routes={route}"
+                f"duplicate_reply={'yes' if duplicate else 'no'} | "
+                f"input_chars={trace.get('input_chars', 'n/a')} | "
+                f"context_chars={trace.get('context_chars', 'n/a')} | "
+                f"output_chars={trace.get('response_chars', 'n/a')} | "
+                f"model_ms={trace.get('elapsed_ms', 'n/a')} | routes={route}"
             )
         lines.append(
             "If direct Ollama answers differ but these tasks use a different "
