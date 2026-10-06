@@ -21,6 +21,10 @@ class FileIndex:
     local Ollama embedding model, keeping private file retrieval local by
     default. The implementation uses SQLite plus cosine similarity so JARVIS
     does not need a vector database during early development.
+
+    The index deliberately refuses common credential and private-key files.
+    Sensitive paths are rejected before file contents are read, stored in
+    SQLite, or sent to an embedding provider.
     """
 
     TEXT_EXTENSIONS = {
@@ -34,6 +38,33 @@ class FileIndex:
         ".git", ".venv", ".venv-1", ".venv-2", "node_modules",
         "__pycache__", ".pytest_cache", ".mypy_cache", ".idea", ".vscode",
         "data", "logs", "Qwen3 8B",
+    }
+
+    # Exact names are matched case-insensitively. Keep this conservative and
+    # focused on files that conventionally contain credentials or key material.
+    SENSITIVE_FILE_NAMES = {
+        ".env",
+        ".npmrc",
+        ".pypirc",
+        "credentials.json",
+        "credential.json",
+        "client_secret.json",
+        "client-secrets.json",
+        "service_account.json",
+        "service-account.json",
+        "serviceaccount.json",
+        "serviceaccountkey.json",
+        "secrets.json",
+        "secret.json",
+        "local.properties",
+        "id_rsa",
+        "id_dsa",
+        "id_ecdsa",
+        "id_ed25519",
+    }
+
+    SENSITIVE_FILE_SUFFIXES = {
+        ".pem", ".key", ".p12", ".pfx", ".jks", ".keystore",
     }
 
     def __init__(
@@ -159,10 +190,26 @@ class FileIndex:
             except sqlite3.OperationalError:
                 self.fts_enabled = False
 
+    @classmethod
+    def _is_sensitive_file(cls, path):
+        name = path.name.lower()
+        if name in cls.SENSITIVE_FILE_NAMES:
+            return True
+        if name.startswith(".env."):
+            return True
+        if path.suffix.lower() in cls.SENSITIVE_FILE_SUFFIXES:
+            return True
+        return False
+
     def _is_ignored(self, path):
-        return any(part in self.IGNORED_DIRECTORIES for part in path.parts)
+        return (
+            any(part in self.IGNORED_DIRECTORIES for part in path.parts)
+            or self._is_sensitive_file(path)
+        )
 
     def _read_content(self, path, size_bytes):
+        if self._is_sensitive_file(path):
+            return None
         if path.suffix.lower() not in self.TEXT_EXTENSIONS:
             return None
         if size_bytes > self.max_text_bytes:
