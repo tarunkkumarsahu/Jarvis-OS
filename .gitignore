@@ -1,5 +1,28 @@
 # Secrets
 .env
+.env.*
+!.env.example
+credentials.json
+credential.json
+client_secret.json
+client-secrets.json
+service_account.json
+service-account.json
+serviceaccount.json
+serviceAccountKey.json
+secrets.json
+secret.json
+local.properties
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
 
 # Python environments
 .venv/
@@ -22,6 +45,12 @@ Thumbs.db
 # Logs / temp
 *.log
 *.tmp
+logs/
+
+# Local JARVIS runtime data
+data/*.db
+data/*.db-*
+memory/data/memory.json
 
 # Local model data
 Qwen3 8B/

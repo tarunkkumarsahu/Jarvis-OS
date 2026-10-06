@@ -1,86 +1,214 @@
-import speech_recognition as sr
-import pyttsx3
-import sounddevice as sd
-import numpy as np
-import wave
-import tempfile
 import os
+import platform
+import re
+import subprocess
+import tempfile
+import wave
+
+
+class VoiceUnavailableError(RuntimeError):
+    """Raised when a requested voice capability is unavailable."""
 
 
 class VoiceManager:
+    """Speech input/output boundary for the desktop JARVIS experience.
+
+    Optional audio libraries are imported lazily so a missing microphone or TTS
+    package can never prevent the desktop app from starting. On Windows, speech
+    output also has a dependency-free System.Speech fallback.
+    """
 
     def __init__(self):
-        self.engine = pyttsx3.init()
-        self.engine.setProperty("rate", 175)
-        self.engine.setProperty("volume", 1.0)
+        self.rate = int(os.getenv("JARVIS_TTS_RATE", "178"))
+        self.volume = float(os.getenv("JARVIS_TTS_VOLUME", "1.0"))
+        self.language = os.getenv("JARVIS_STT_LANGUAGE", "en-IN")
+        self.stt_backend = os.getenv("JARVIS_STT_BACKEND", "google").lower().strip()
+        self.local_stt_model = os.getenv("JARVIS_STT_MODEL", "base")
+        self._whisper_model = None
+        self.max_speech_chars = int(os.getenv("JARVIS_TTS_MAX_CHARS", "900"))
 
-        self.recognizer = sr.Recognizer()
+    @staticmethod
+    def clean_text(text):
+        value = str(text or "").strip()
+        if not value:
+            return ""
+
+        value = re.sub(r"```.*?```", " Code is shown on screen. ", value, flags=re.S)
+        value = re.sub(r"`([^`]+)`", r"\1", value)
+        value = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", value)
+        value = re.sub(r"https?://\S+", "", value)
+        # Spoken audio should never announce Unicode emoji descriptions such as
+        # "smiling face with smiling eyes". Keep the onscreen answer untouched.
+        # Includes pictographs, flags, dingbats, variation selectors and joined
+        # emoji sequences, but deliberately preserves Hindi and Latin letters.
+        value = re.sub(
+            "[\\U0001F000-\\U0001FAFF\\u2600-\\u27BF\\uFE0E\\uFE0F\\u200D\\u20E3]",
+            "",
+            value,
+        )
+        value = re.sub(r"[*_#>|]", " ", value)
+        value = re.sub(r"\s+", " ", value).strip()
+        return value
+
+    def speech_text(self, text):
+        value = self.clean_text(text)
+        if len(value) <= self.max_speech_chars:
+            return value
+        clipped = value[: self.max_speech_chars].rsplit(" ", 1)[0].strip()
+        return clipped + ". I have put the rest of the response on screen."
 
     def speak(self, text):
+        value = self.speech_text(text)
+        if not value:
+            return False
 
-        if not text:
-            return
+        # Prefer pyttsx3 when installed because it works offline and exposes
+        # system voices. Initialize it per call; many speech drivers are thread
+        # affine and should not be constructed on the Qt UI thread.
+        try:
+            import pyttsx3
 
-        print(f"JARVIS VOICE: {text}")
+            engine = pyttsx3.init()
+            engine.setProperty("rate", self.rate)
+            engine.setProperty("volume", max(0.0, min(self.volume, 1.0)))
+            engine.say(value)
+            engine.runAndWait()
+            engine.stop()
+            return True
+        except Exception:
+            pass
 
-        self.engine.say(text)
-        self.engine.runAndWait()
+        if platform.system() == "Windows":
+            return self._speak_windows(value)
 
-    def listen(self, duration=5):
-
-        print("JARVIS: Listening...")
-
-        sample_rate = 16000
-
-        recording = sd.rec(
-            int(duration * sample_rate),
-            samplerate=sample_rate,
-            channels=1,
-            dtype="int16"
+        raise VoiceUnavailableError(
+            "Text-to-speech is unavailable. Install pyttsx3 or configure a supported system voice."
         )
 
-        sd.wait()
-
-        temp_file = tempfile.NamedTemporaryFile(
-            suffix=".wav",
-            delete=False
+    @staticmethod
+    def _speak_windows(text):
+        powershell = "powershell.exe"
+        script = (
+            "Add-Type -AssemblyName System.Speech; "
+            "$speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+            "$speaker.Speak($env:JARVIS_TTS_TEXT)"
         )
-
-        temp_path = temp_file.name
-        temp_file.close()
+        environment = os.environ.copy()
+        environment["JARVIS_TTS_TEXT"] = text
 
         try:
+            result = subprocess.run(
+                [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=60,
+                shell=False,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise VoiceUnavailableError(f"Windows speech failed: {error}") from error
 
+        if result.returncode != 0:
+            raise VoiceUnavailableError("Windows System.Speech could not synthesize audio.")
+        return True
+
+    def transcribe_local_file(self, audio_path):
+        """Opt-in multilingual offline transcription via faster-whisper.
+
+        CPU int8 avoids competing with Ollama for scarce GPU/VRAM resources.
+        Models are initialized lazily and reused for the current app session.
+        """
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as error:
+            raise VoiceUnavailableError(
+                "Local speech recognition needs faster-whisper. "
+                "Install with: python -m pip install faster-whisper"
+            ) from error
+
+        if self._whisper_model is None:
+            try:
+                self._whisper_model = WhisperModel(
+                    self.local_stt_model, device="cpu", compute_type="int8"
+                )
+            except Exception as error:
+                raise VoiceUnavailableError(
+                    f"Could not load local speech model: {error}"
+                ) from error
+
+        try:
+            segments, _ = self._whisper_model.transcribe(
+                str(audio_path), beam_size=3, vad_filter=True, language=None
+            )
+            return " ".join(part.text.strip() for part in segments if part.text.strip()).strip()
+        except Exception as error:
+            raise VoiceUnavailableError(
+                f"Local speech recognition failed: {error}"
+            ) from error
+
+    def listen(self, duration=6):
+        """Record one utterance and return recognized text.
+
+        SpeechRecognition uses Google's recognizer for this first usable voice
+        milestone. The audio capture itself is local. A local/offline STT
+        adapter can replace this implementation later without changing the UI.
+        """
+        try:
+            import sounddevice as sd
+            if self.stt_backend == "google":
+                import speech_recognition as sr
+        except ImportError as error:
+            raise VoiceUnavailableError(
+                "Voice input dependencies are missing. Run pip install -r requirements.txt."
+            ) from error
+
+        if self.stt_backend not in ("google", "whisper"):
+            raise VoiceUnavailableError(
+                "Unsupported speech backend. Set JARVIS_STT_BACKEND to google or whisper."
+            )
+        recognizer = sr.Recognizer() if self.stt_backend == "google" else None
+        sample_rate = 16000
+
+        try:
+            recording = sd.rec(
+                int(float(duration) * sample_rate),
+                samplerate=sample_rate,
+                channels=1,
+                dtype="int16",
+            )
+            sd.wait()
+        except Exception as error:
+            raise VoiceUnavailableError(f"Microphone capture failed: {error}") from error
+
+        handle = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        temp_path = handle.name
+        handle.close()
+
+        try:
             with wave.open(temp_path, "wb") as wav_file:
                 wav_file.setnchannels(1)
                 wav_file.setsampwidth(2)
                 wav_file.setframerate(sample_rate)
                 wav_file.writeframes(recording.tobytes())
 
+            if self.stt_backend == "whisper":
+                return self.transcribe_local_file(temp_path)
+
             with sr.AudioFile(temp_path) as source:
-                audio = self.recognizer.record(source)
+                audio = recognizer.record(source)
 
             try:
-
-                text = self.recognizer.recognize_google(audio)
-
-                print(f"YOU: {text}")
-
-                return text
-
+                return recognizer.recognize_google(audio, language=self.language).strip()
             except sr.UnknownValueError:
-
-                print("JARVIS: I couldn't understand that.")
-
                 return ""
-
             except sr.RequestError as error:
-
-                print(f"Speech recognition error: {error}")
-
-                return ""
-
+                raise VoiceUnavailableError(
+                    f"Speech recognition service is unavailable: {error}"
+                ) from error
         finally:
-
-            if os.path.exists(temp_path):
+            try:
                 os.remove(temp_path)
+            except OSError:
+                pass
