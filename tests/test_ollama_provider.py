@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import providers.ollama_provider as ollama_provider_module
 from providers.ollama_provider import OllamaProvider
 
 
@@ -94,3 +95,29 @@ def test_provider_keeps_bounded_conversation_history():
 
     provider.clear_history()
     assert provider.history == []
+
+
+def test_provider_degrades_gracefully_when_ollama_package_is_missing(monkeypatch):
+    monkeypatch.setattr(ollama_provider_module, "_ollama", None)
+
+    provider = ollama_provider_module.OllamaProvider()
+
+    assert provider.status == "UNAVAILABLE"
+    assert provider.available is False
+
+    result = provider.generate("how are you?")
+
+    assert "Local AI is unavailable right now" in result
+    assert "python -m pip install -r requirements.txt" in result
+
+
+def test_injected_chat_function_still_works_without_ollama_package(monkeypatch):
+    monkeypatch.setattr(ollama_provider_module, "_ollama", None)
+
+    provider = ollama_provider_module.OllamaProvider(
+        chat_fn=lambda **kwargs: make_response(content="ready")
+    )
+
+    assert provider.status == "READY"
+    assert provider.available is True
+    assert provider.generate("hello") == "ready"
