@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
-import ollama
+try:
+    import ollama as _ollama
+except ModuleNotFoundError:  # optional runtime dependency; deterministic JARVIS should still boot
+    _ollama = None
 
 
 EventHandler = Callable[[str, dict[str, Any]], None]
@@ -16,6 +19,10 @@ class OllamaProvider:
     The provider owns model conversation history and the model/tool loop, but it
     does not own permissions, UI state, or tool implementations. Those remain in
     higher layers so the provider stays reusable.
+
+    Ollama is treated as an optional runtime capability. If the Python package is
+    missing, JARVIS can still boot and deterministic/local tools can still work;
+    only requests that actually require the language model degrade gracefully.
     """
 
     def __init__(
@@ -26,10 +33,25 @@ class OllamaProvider:
         history_turns: int = 6,
     ) -> None:
         self.model = model
-        self._chat = chat_fn or ollama.chat
         self.max_tool_rounds = max(1, max_tool_rounds)
         self.history_turns = max(0, history_turns)
         self.history: list[dict[str, str]] = []
+        self.unavailable_reason: str | None = None
+
+        if chat_fn is not None:
+            self._chat = chat_fn
+            self.status = "READY"
+        elif _ollama is None:
+            self._chat = None
+            self.status = "UNAVAILABLE"
+            self.unavailable_reason = (
+                "The Python 'ollama' package is not installed in the active JARVIS "
+                "environment. Deterministic commands are still available. Install "
+                "project dependencies with: python -m pip install -r requirements.txt"
+            )
+        else:
+            self._chat = _ollama.chat
+            self.status = "READY"
 
         self.system_prompt = """You are JARVIS, a local personal AI assistant.
 
@@ -48,6 +70,10 @@ Important rules:
 - Keep responses concise unless the user asks for detail.
 """
 
+    @property
+    def available(self) -> bool:
+        return self._chat is not None
+
     def generate(
         self,
         user_input: str,
@@ -58,6 +84,10 @@ Important rules:
         text = user_input.strip()
         if not text:
             return ""
+
+        if self._chat is None:
+            reason = self.unavailable_reason or "The local Ollama model provider is unavailable."
+            return f"Local AI is unavailable right now. {reason}"
 
         tool_definitions = tools or []
         messages: list[Any] = [
